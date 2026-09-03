@@ -164,7 +164,7 @@ func (m model) selectedRepoIndex() (int, bool) {
 
 func (m model) actionRepoIndex() (int, bool) {
 	if idx, ok := m.selectedRepoIndex(); ok {
-		return idx, m.repos[idx].State == StateAttention
+		return idx, m.repos[idx].State != StateUpdating
 	}
 	if m.cursor == 0 && m.decisionIndex >= 0 && m.decisionIndex < len(m.repos) && m.repos[m.decisionIndex].State == StateAttention {
 		return m.decisionIndex, true
@@ -244,22 +244,8 @@ func (m *model) findNextAttention(after int) int {
 }
 
 func (m *model) advanceDecision(after int) {
-	wasAll := m.cursor == 0
-	selectedIndex, selected := m.selectedRepoIndex()
-
 	if m.decisionIndex == after || m.decisionIndex < 0 || m.decisionIndex >= len(m.repos) || m.repos[m.decisionIndex].State != StateAttention {
 		m.decisionIndex = m.findNextAttention(after)
-	}
-	if wasAll {
-		return
-	}
-	if selected && selectedIndex == after {
-		next := m.findNextAttention(after)
-		if next >= 0 {
-			m.cursor = next + 1
-		} else {
-			m.cursor = 0
-		}
 	}
 }
 
