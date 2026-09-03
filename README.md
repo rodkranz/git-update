@@ -20,7 +20,7 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 Because the executable is named `git-update`, Git exposes it as:
 
 ```bash
-git update ~/Projects/olx
+git update ~/Projects
 ```
 
 ## Build
@@ -46,10 +46,10 @@ git update [path] [flags]
 Examples:
 
 ```bash
-git update ~/Projects/olx
-git update ~/Projects/olx --dry-run
-git update ~/Projects/olx --branch main
-git update ~/Projects/olx --workers 8
+git update ~/Projects
+git update ~/Projects --dry-run
+git update ~/Projects --branch main
+git update ~/Projects --workers 8
 ```
 
 Keys:
