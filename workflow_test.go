@@ -131,6 +131,24 @@ func TestParseConfigDefaultsToPerRepoBranchDetection(t *testing.T) {
 	}
 }
 
+func TestFooterShowsShortcutsShortcut(t *testing.T) {
+	m := model{}
+	footer := m.renderFooter(160)
+	if !strings.Contains(footer, "? shortcuts") {
+		t.Fatalf("footer does not advertise shortcuts help: %q", footer)
+	}
+}
+
+func TestHelpModalListsKeyboardShortcuts(t *testing.T) {
+	m := model{}
+	help := m.renderHelp(100, 35)
+	for _, want := range []string{"Keyboard shortcuts", "Switch to default branch & update", "Pull current branch", "SKIP repository", "Open / close shortcuts"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help modal missing %q", want)
+		}
+	}
+}
+
 func newRemoteFixtureWithBranch(t *testing.T, branch string) (remote, work, upstream string) {
 	t.Helper()
 	base := t.TempDir()
