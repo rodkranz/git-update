@@ -174,6 +174,78 @@ func TestParseConfigDefaultsToPerRepoBranchDetection(t *testing.T) {
 	}
 }
 
+func TestNativeShellCommandUsesUserShellAndRepositoryDirectory(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	cmd := nativeShellCommand(Repo{Path: "/tmp/example-repository"})
+	if cmd.Args[0] != "/bin/sh" {
+		t.Fatalf("shell = %q, want /bin/sh", cmd.Args[0])
+	}
+	if cmd.Dir != "/tmp/example-repository" {
+		t.Fatalf("Dir = %q, want repository path", cmd.Dir)
+	}
+}
+
+func TestShellFinishedRefreshesRepositoryState(t *testing.T) {
+	_, work, _ := newRemoteFixtureWithBranch(t, "main")
+	stale := inspectRepo(work, "")
+	mustWriteFile(t, filepath.Join(work, "after-shell.txt"), "created in shell\n")
+
+	m := model{
+		cfg:           Config{},
+		repos:         []Repo{stale},
+		cursor:        1,
+		decisionIndex: -1,
+	}
+	updatedModel, _ := m.Update(shellFinishedMsg{index: 0})
+	got := updatedModel.(model)
+	if got.repos[0].State != StateAttention {
+		t.Fatalf("state = %v, want needs attention after shell-created file", got.repos[0].State)
+	}
+	if len(got.repos[0].Changes) == 0 {
+		t.Fatal("repository was not refreshed after shell exit")
+	}
+	if !strings.Contains(strings.Join(got.repos[0].Log, "\n"), "repository refreshed") {
+		t.Fatalf("activity does not mention refresh: %v", got.repos[0].Log)
+	}
+}
+
+func TestSelectedRepositoryFooterShowsShellShortcut(t *testing.T) {
+	m := model{
+		repos: []Repo{{
+			State:        StateFailed,
+			Branch:       "feature/test",
+			TargetBranch: "main",
+		}},
+		cursor: 1,
+	}
+	footer := m.renderFooter(220)
+	if !strings.Contains(footer, "t shell here") {
+		t.Fatalf("selected repository footer does not show shell shortcut: %q", footer)
+	}
+
+	m.cursor = 0
+	m.decisionIndex = 0
+	footer = m.renderFooter(220)
+	if strings.Contains(footer, "t shell here") {
+		t.Fatalf("All repositories footer should not show shell shortcut: %q", footer)
+	}
+}
+
+func TestShellConfirmationExplainsExitAndRefresh(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	m := model{
+		repos:        []Repo{{Name: "example", Path: "/tmp/example", State: StateAttention}},
+		confirm:      confirmShellSelected,
+		confirmIndex: 0,
+	}
+	modal := m.renderConfirm(120, 40)
+	for _, want := range []string{"Open shell", "/bin/sh", "Type \"exit\" to return", "refreshed automatically"} {
+		if !strings.Contains(modal, want) {
+			t.Fatalf("shell confirmation missing %q", want)
+		}
+	}
+}
+
 func TestFooterShowsShortcutsShortcut(t *testing.T) {
 	m := model{}
 	footer := m.renderFooter(160)
@@ -185,7 +257,7 @@ func TestFooterShowsShortcutsShortcut(t *testing.T) {
 func TestHelpModalListsKeyboardShortcuts(t *testing.T) {
 	m := model{}
 	help := m.renderHelp(100, 35)
-	for _, want := range []string{"Keyboard shortcuts", "Switch to default branch & update", "Pull current branch", "SKIP repository", "Open / close shortcuts"} {
+	for _, want := range []string{"Keyboard shortcuts", "Switch to default branch & update", "Pull current branch", "Open native shell in selected repository", "SKIP repository", "Open / close shortcuts"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help modal missing %q", want)
 		}
