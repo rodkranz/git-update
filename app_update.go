@@ -54,6 +54,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		key := msg.String()
+
+		if m.showHelp {
+			switch key {
+			case "?", "esc", "q":
+				m.showHelp = false
+			}
+			return m, tea.Batch(cmds...)
+		}
+
 		if m.confirm != confirmNone {
 			switch key {
 			case "y", "Y", "enter":
@@ -69,6 +78,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirm = confirmNone
 				m.confirmIndex = -1
 			}
+			return m, tea.Batch(cmds...)
+		}
+
+		if key == "?" {
+			m.showHelp = true
 			return m, tea.Batch(cmds...)
 		}
 
