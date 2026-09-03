@@ -15,6 +15,11 @@ type repoUpdatedMsg struct {
 	repo  Repo
 }
 
+type shellFinishedMsg struct {
+	index int
+	err   error
+}
+
 type jobAction int
 
 const (
@@ -34,6 +39,7 @@ type confirmMode int
 const (
 	confirmNone confirmMode = iota
 	confirmDiscardSelected
+	confirmShellSelected
 )
 
 type model struct {
