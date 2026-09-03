@@ -19,6 +19,8 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 - keeps processing while you answer repositories that need a decision;
 - shows a global activity stream in All mode;
 - shows repository-specific output when you select a repository;
+- keeps common keyboard shortcuts visible in the footer;
+- opens a full keyboard shortcuts modal with `?`;
 - supports pulling the current branch without switching;
 - supports switching to the detected default branch and updating while keeping local changes;
 - provides destructive `Discard changes & Update` only after explicit confirmation;
@@ -184,14 +186,19 @@ After choosing `m`, `p`, `d` (after confirmation), or `s`, the decision flow imm
 
 ## Keys
 
+The footer always shows the common shortcuts, including `? shortcuts`. Press `?` to open the full keyboard shortcuts modal; press `?` or `Esc` to close it.
+
 - `↑/↓` or `j/k`: select All or a repository
 - `g` / `Home`: return to All repositories
+- `G` / `End`: jump to the last repository
 - `m`: switch to the repository's detected default branch and update it
 - `p`: pull the currently checked-out branch
 - `d`: discard local tracked/staged/untracked changes and update the default branch; requires destructive confirmation
 - `s`: SKIP the repository for the current session
 - `r`: rescan when background work is finished
+- `?`: open or close the keyboard shortcuts modal
 - `q`: quit
+- `Ctrl+C`: quit
 - `y` / `Enter`: confirm a pending discard
 - `n` / `Esc`: cancel a pending discard
 
@@ -224,7 +231,7 @@ The test suite creates isolated temporary Git repositories, bare remotes, commit
 make test
 ```
 
-Coverage includes repository discovery, default-branch detection for both `main` and `master`, branch overrides, clean/dirty worktrees, current-branch pulls, fast-forward updates, decision advancement, All mode, discard behavior and dry-run safety.
+Coverage includes repository discovery, default-branch detection for both `main` and `master`, branch overrides, clean/dirty worktrees, current-branch pulls, fast-forward updates, decision advancement, All mode, footer/help shortcuts, discard behavior and dry-run safety.
 
 ## CI
 
