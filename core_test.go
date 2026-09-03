@@ -123,6 +123,73 @@ func TestUpdateRepoSwitchAndDryRun(t *testing.T) {
 	}
 }
 
+func TestDiscardAndUpdateRepoRemovesChangesButKeepsIgnoredFiles(t *testing.T) {
+	_, work, _ := newRemoteFixture(t)
+
+	mustWriteFile(t, filepath.Join(work, ".gitignore"), "ignored.tmp\n")
+	runGit(t, work, "add", ".gitignore")
+	runGit(t, work, "commit", "-m", "add ignore rule")
+
+	mustWriteFile(t, filepath.Join(work, "README.md"), "modified\n")
+	mustWriteFile(t, filepath.Join(work, "staged.txt"), "staged\n")
+	runGit(t, work, "add", "staged.txt")
+	mustWriteFile(t, filepath.Join(work, "untracked.txt"), "untracked\n")
+	mustWriteFile(t, filepath.Join(work, "ignored.tmp"), "keep me\n")
+
+	state := inspectRepo(work, "master")
+	if len(state.Changes) != 3 {
+		t.Fatalf("expected 3 visible changes, got %#v", state.Changes)
+	}
+
+	got := discardAndUpdateRepo(state, Config{Branch: "master"})
+	if got.State != StateUpdated {
+		t.Fatalf("discard and update failed: %+v", got)
+	}
+	if len(got.Changes) != 0 {
+		t.Fatalf("changes remain after discard: %#v", got.Changes)
+	}
+	readme, err := os.ReadFile(filepath.Join(work, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "initial\n" {
+		t.Fatalf("README content = %q, want initial content", readme)
+	}
+	if _, err := os.Stat(filepath.Join(work, "staged.txt")); !os.IsNotExist(err) {
+		t.Fatalf("staged file should have been removed, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "untracked.txt")); !os.IsNotExist(err) {
+		t.Fatalf("untracked file should have been removed, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "ignored.tmp")); err != nil {
+		t.Fatalf("ignored file should be kept: %v", err)
+	}
+}
+
+func TestDiscardAndUpdateRepoDryRunDoesNotChangeFiles(t *testing.T) {
+	_, work, _ := newRemoteFixture(t)
+	mustWriteFile(t, filepath.Join(work, "README.md"), "modified\n")
+	mustWriteFile(t, filepath.Join(work, "untracked.txt"), "untracked\n")
+
+	got := discardAndUpdateRepo(inspectRepo(work, "master"), Config{Branch: "master", DryRun: true})
+	if got.State != StateUpdated {
+		t.Fatalf("dry-run discard failed: %+v", got)
+	}
+	readme, err := os.ReadFile(filepath.Join(work, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(readme) != "modified\n" {
+		t.Fatalf("dry-run changed tracked file: %q", readme)
+	}
+	if _, err := os.Stat(filepath.Join(work, "untracked.txt")); err != nil {
+		t.Fatalf("dry-run removed untracked file: %v", err)
+	}
+	if strings.Join(got.Log, "\n") == "" || !strings.Contains(strings.Join(got.Log, "\n"), "git reset --hard HEAD") {
+		t.Fatalf("dry-run log does not show discard commands: %#v", got.Log)
+	}
+}
+
 func TestInspectRepoDetectsOperationInProgress(t *testing.T) {
 	repo := newLocalRepo(t)
 	gitDir := strings.TrimSpace(runGit(t, repo, "rev-parse", "--git-dir"))
