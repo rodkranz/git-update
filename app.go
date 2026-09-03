@@ -45,6 +45,7 @@ type model struct {
 	cursor   int // 0 = All repositories, 1..N = repository index + 1
 	scanning bool
 	scanErr  error
+	showHelp bool
 
 	decisionIndex int
 	confirm       confirmMode
