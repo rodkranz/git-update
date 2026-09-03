@@ -1,6 +1,10 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"strings"
+
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -50,4 +54,21 @@ func repoJobCmd(job repoJob, repo Repo, cfg Config) tea.Cmd {
 		}
 		return repoUpdatedMsg{index: job.index, repo: updated}
 	}
+}
+
+func shellCmd(index int, repo Repo) tea.Cmd {
+	cmd := nativeShellCommand(repo)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return shellFinishedMsg{index: index, err: err}
+	})
+}
+
+func nativeShellCommand(repo Repo) *exec.Cmd {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	cmd := exec.Command(shell) //nolint:gosec // The shell is intentionally selected from the user's SHELL environment variable.
+	cmd.Dir = repo.Path
+	return cmd
 }
