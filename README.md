@@ -10,17 +10,21 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 
 - recursively finds top-level Git repositories;
 - ignores nested repositories and submodule-style `.git` files;
-- shows current branch and local changes;
-- automatically updates clean repositories already on the target branch;
-- runs repository updates in parallel (4 workers by default);
-- lets you keep working through repositories that need attention while background updates continue;
-- automatically moves to the next repository needing a decision after an action is selected;
-- supports pulling the current non-target branch without switching;
-- supports switching to the target branch and updating while keeping local changes;
-- provides destructive `Discard changes & Update` only after an explicit confirmation;
+- detects the default branch **per repository** instead of assuming `master` or `main`;
+- uses `origin/HEAD` when available, with safe local fallbacks;
+- supports an explicit `--branch` override when you intentionally want one branch for every repository;
+- starts in **All repositories** mode;
+- automatically updates clean repositories already on their own default branch;
+- runs updates in parallel (4 workers by default);
+- keeps processing while you answer repositories that need a decision;
+- shows a global activity stream in All mode;
+- shows repository-specific output when you select a repository;
+- supports pulling the current branch without switching;
+- supports switching to the detected default branch and updating while keeping local changes;
+- provides destructive `Discard changes & Update` only after explicit confirmation;
 - supports `SKIP` without touching the repository;
 - never stashes, force-checks out, force-pulls, or discards changes automatically;
-- pulls with `git pull --ff-only origin <branch>`;
+- pulls with `git pull --ff-only`;
 - supports `--dry-run`.
 
 Because the executable is named `git-update`, Git exposes it as:
@@ -43,46 +47,25 @@ make doctor
 
 ## Make commands
 
-Run:
-
-```bash
-make help
-```
-
-Available commands include:
-
 ```text
-make doctor      Check Go, Git and install path
-make deps        Prepare Go dependencies
-make tools       Install development tools into .bin
-make fmt         Format Go code
-make fmt-check   Verify formatting
-make vet         Run go vet
-make test        Run tests with race detector and coverage
-make coverage    Show coverage details
-make lint        Run the pinned golangci-lint version
-make build       Build bin/git-update
-make install     Install git-update into GOBIN/GOPATH/bin
-make uninstall   Remove the installed binary
-make run         Run from source
-make ci          Run all validation checks
-make clean       Remove build output
-make distclean   Remove build output and local development tools
+make help         Show available commands
+make doctor       Check Go, Git and install path
+make deps         Prepare Go dependencies
+make tools        Install development tools into .bin
+make fmt          Format Go code
+make fmt-check    Verify formatting
+make vet          Run go vet
+make test         Run tests with race detector and coverage
+make coverage     Show coverage details
+make lint         Run the pinned golangci-lint version
+make build        Build bin/git-update
+make install      Install git-update into GOBIN/GOPATH/bin
+make uninstall    Remove the installed binary
+make run          Run from source
+make ci           Run all validation checks
+make clean        Remove build output
+make distclean    Remove build output and local development tools
 ```
-
-## Build
-
-```bash
-make build
-```
-
-The binary will be created at:
-
-```text
-bin/git-update
-```
-
-`make build` prepares the Go module dependencies automatically before compiling.
 
 ## Install
 
@@ -96,7 +79,7 @@ The binary is installed into `go env GOBIN`. If `GOBIN` is empty, it falls back 
 $(go env GOPATH)/bin
 ```
 
-Make sure that directory is in your `PATH`. After installation:
+After installation:
 
 ```bash
 git update ~/Projects
@@ -115,23 +98,72 @@ Examples:
 ```bash
 git update ~/Projects
 git update ~/Projects --dry-run
-git update ~/Projects --branch main
 git update ~/Projects --workers 8
 ```
 
-## Decision flow
+By default, the target branch is detected independently for every repository.
 
-Repositories that are already on the target branch and have no local changes are automatically queued for update as soon as the scan finishes.
+If you explicitly want to force the same branch for all repositories:
 
-For a clean repository on another branch:
+```bash
+git update ~/Projects --branch main
+```
+
+## Default branch detection
+
+`git-update` does **not** assume that every repository uses `master` or `main`.
+
+For each repository it tries, in order:
+
+1. the explicit `--branch` override, when provided;
+2. the symbolic remote default branch from `refs/remotes/origin/HEAD`;
+3. an unambiguous remote `origin/main` or `origin/master`;
+4. an unambiguous local `main` or `master`;
+5. the current branch when it is already `main` or `master`.
+
+If the default branch cannot be determined safely, the repository is marked as needing attention. The app will not guess. You can pull the current branch, SKIP it, or restart with an explicit `--branch` override.
+
+## All repositories mode
+
+The first item in the list is:
 
 ```text
-[m] Switch to <target> & Update
+◎ All repositories
+```
+
+It is selected automatically when the scan finishes.
+
+In this mode:
+
+- every safe repository is queued automatically;
+- workers update repositories in parallel;
+- the right panel shows overall progress and a global activity stream;
+- when a repository needs input, its decision is shown in the same panel;
+- after you choose an action, the next repository needing input is shown immediately;
+- background updates continue while you make decisions.
+
+Selecting a specific repository changes the right panel to that repository's branch, target, local changes and Git output.
+
+## Decision flow
+
+### Default branch + clean
+
+No question is asked. It is updated automatically:
+
+```text
+main/master/default + clean
+→ automatic background update
+```
+
+### Other branch + clean
+
+```text
+[m] Switch to <default> & Update
 [p] Pull current branch
 [s] SKIP
 ```
 
-For a dirty repository already on the target branch:
+### Default branch + local changes
 
 ```text
 [p] Pull current branch (keep changes)
@@ -139,87 +171,68 @@ For a dirty repository already on the target branch:
 [s] SKIP
 ```
 
-For a dirty repository on another branch:
+### Other branch + local changes
 
 ```text
-[m] Switch to <target> & Update (keep changes)
+[m] Switch to <default> & Update (keep changes)
 [p] Pull current branch (keep changes)
-[d] Discard changes, switch to <target> & Update
+[d] Discard changes, switch to <default> & Update
 [s] SKIP
 ```
 
-After selecting `m`, `p`, `d` (after confirmation), or `s`, the UI immediately moves to the next repository needing attention. The selected update is queued and runs in the background when a worker is available.
+After choosing `m`, `p`, `d` (after confirmation), or `s`, the decision flow immediately advances. The selected Git operation runs in the background when a worker is available.
 
-### Keys
+## Keys
 
-- `↑/↓` or `j/k`: select repository
-- `m`: switch to the target branch and update it
+- `↑/↓` or `j/k`: select All or a repository
+- `g` / `Home`: return to All repositories
+- `m`: switch to the repository's detected default branch and update it
 - `p`: pull the currently checked-out branch
-- `d`: discard local tracked/staged/untracked changes and update the target branch; requires destructive confirmation
-- `s`: SKIP selected repository for the current session
-- `r`: rescan when no background work is running
+- `d`: discard local tracked/staged/untracked changes and update the default branch; requires destructive confirmation
+- `s`: SKIP the repository for the current session
+- `r`: rescan when background work is finished
 - `q`: quit
-- `y`/`Enter`: confirm a pending discard
-- `n`/`Esc`: cancel a pending discard
+- `y` / `Enter`: confirm a pending discard
+- `n` / `Esc`: cancel a pending discard
 
 ## Safety model
 
-Clean repositories on the target branch are safe and update automatically with:
+Safe automatic updates use:
 
 ```bash
-git pull --ff-only origin <target>
+git pull --ff-only origin <detected-default-branch>
 ```
 
-`Pull current branch` does not switch branches and does not discard local changes. If Git cannot fast-forward safely because of local work or branch history, the operation fails and the repository is shown as failed.
+`Pull current branch` does not switch branches and does not discard local changes. If Git cannot fast-forward safely, the operation fails and the repository is shown as failed.
 
-`Switch to target & Update` keeps local changes. Git itself will block the branch switch if those changes cannot be carried safely to the target branch.
+`Switch to default & Update` keeps local changes. Git itself blocks the branch switch if those changes cannot be carried safely.
 
-`Discard changes & Update` is intentionally destructive and is only available when local changes exist. Before running it, the UI shows the affected changes and asks for confirmation. It executes:
+`Discard changes & Update` is intentionally destructive. Before it runs, the UI shows the affected changes and asks for confirmation. It executes:
 
 ```bash
 git reset --hard HEAD
 git clean -fd
 ```
 
-This removes tracked, staged, and untracked changes. Git-ignored files are not removed because `git clean` is intentionally called without `-x` or `-X`.
-
-`SKIP` only changes the in-memory state of the current session. It does not touch the repository.
+Tracked, staged and untracked changes are removed. Git-ignored files are preserved because `git clean` is intentionally called without `-x` or `-X`.
 
 ## Tests
 
-The test suite creates isolated temporary Git repositories, bare remotes, commits and clones. It never touches your real projects and does not require network access for the Git integration fixtures.
+The test suite creates isolated temporary Git repositories, bare remotes, commits and clones. It never touches your real projects.
 
 ```bash
 make test
 ```
 
-Coverage includes:
-
-- CLI/config parsing;
-- repository discovery;
-- nested repo and submodule exclusion;
-- clean/dirty worktrees;
-- different branches;
-- merge/rebase-style operation detection;
-- dry-run behavior;
-- branch switching;
-- automatic-update classification;
-- moving to the next repository needing attention;
-- pulling the currently checked-out non-target branch;
-- real fast-forward pulls against temporary bare remotes;
-- destructive discard of tracked, staged, and untracked changes;
-- preservation of ignored files during discard;
-- non-destructive discard behavior in dry-run mode.
+Coverage includes repository discovery, default-branch detection for both `main` and `master`, branch overrides, clean/dirty worktrees, current-branch pulls, fast-forward updates, decision advancement, All mode, discard behavior and dry-run safety.
 
 ## CI
 
-GitHub Actions runs on every pull request and push to `main`, and can also be started manually.
+GitHub Actions runs on every pull request and push to `main` and validates the same Make targets used locally:
 
-The pipeline validates the same Make targets used locally:
-
-1. **Test** — `make test`.
-2. **Lint** — `make lint`.
-3. **Build** — `make build` on Linux and macOS.
+1. **Test** — `make test`
+2. **Lint** — `make lint`
+3. **Build** — `make build` on Linux and macOS
 
 Run everything locally with:
 

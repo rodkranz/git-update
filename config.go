@@ -19,7 +19,7 @@ func parseConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("git-update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	branch := fs.String("branch", "master", "target branch to update")
+	branch := fs.String("branch", "", "override the target branch for every repository (default: detect each repository's default branch)")
 	workers := fs.Int("workers", 4, "maximum parallel updates")
 	dryRun := fs.Bool("dry-run", false, "show actions without changing repositories")
 
@@ -54,5 +54,5 @@ func parseConfig(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid root path: %w", err)
 	}
 
-	return Config{Root: absRoot, Branch: *branch, Workers: *workers, DryRun: *dryRun}, nil
+	return Config{Root: absRoot, Branch: strings.TrimSpace(*branch), Workers: *workers, DryRun: *dryRun}, nil
 }
