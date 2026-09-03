@@ -138,6 +138,66 @@ func updateRepo(repo Repo, cfg Config, allowSwitch, allowDirty bool) Repo {
 	return fresh
 }
 
+func discardAndUpdateRepo(repo Repo, cfg Config) Repo {
+	repo.State = StateUpdating
+	repo.Log = nil
+	if repo.InProgress {
+		repo.State = StateSkipped
+		repo.Message = "operation in progress; discard blocked"
+		return repo
+	}
+
+	if len(repo.Changes) == 0 {
+		return updateRepo(repo, cfg, true, false)
+	}
+
+	discardLog := []string{
+		"$ git reset --hard HEAD",
+		"$ git clean -fd",
+	}
+
+	if cfg.DryRun {
+		discardLog[0] += "  # dry-run"
+		discardLog[1] += "  # dry-run"
+		cleaned := repo
+		cleaned.Changes = nil
+		updated := updateRepo(cleaned, cfg, true, false)
+		updated.Log = append(discardLog, updated.Log...)
+		return updated
+	}
+
+	out, err := gitCombinedOutput(repo.Path, "reset", "--hard", "HEAD")
+	if strings.TrimSpace(out) != "" {
+		discardLog = append(discardLog, splitLines(out)...)
+	}
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = "discard failed during reset: " + err.Error()
+		repo.Log = discardLog
+		return repo
+	}
+
+	out, err = gitCombinedOutput(repo.Path, "clean", "-fd")
+	if strings.TrimSpace(out) != "" {
+		discardLog = append(discardLog, splitLines(out)...)
+	}
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = "discard failed during clean: " + err.Error()
+		repo.Log = discardLog
+		return repo
+	}
+
+	fresh := inspectRepo(repo.Path, cfg.Branch)
+	if fresh.State == StateFailed {
+		fresh.Log = discardLog
+		return fresh
+	}
+	updated := updateRepo(fresh, cfg, true, false)
+	updated.Log = append(discardLog, updated.Log...)
+	return updated
+}
+
 func switchToTarget(path, branch string) (string, error) {
 	if gitSuccess(path, "show-ref", "--verify", "--quiet", "refs/heads/"+branch) {
 		return gitCombinedOutput(path, "switch", branch)
