@@ -262,9 +262,10 @@ func (m *model) appendGlobal(line string) {
 
 func repoResultLine(repo Repo) string {
 	icon := "✓"
-	if repo.State == StateFailed {
+	switch repo.State {
+	case StateFailed:
 		icon = "✗"
-	} else if repo.State == StateSkipped {
+	case StateSkipped:
 		icon = "↷"
 	}
 	message := repo.Message
