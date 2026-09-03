@@ -1,5 +1,7 @@
 # git-update
 
+[![CI](https://github.com/rodkranz/git-update/actions/workflows/ci.yml/badge.svg)](https://github.com/rodkranz/git-update/actions/workflows/ci.yml)
+
 A safe full-screen terminal UI for updating many Git repositories from one place.
 
 Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
