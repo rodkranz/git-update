@@ -52,6 +52,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, m.startQueuedJobs()...)
 
+	case shellFinishedMsg:
+		if msg.index >= 0 && msg.index < len(m.repos) {
+			previous := m.repos[msg.index]
+			fresh := inspectRepo(previous.Path, m.cfg.Branch)
+			fresh.Log = append([]string(nil), previous.Log...)
+			if msg.err != nil {
+				fresh.Log = append(fresh.Log, "shell exited: "+msg.err.Error())
+			} else {
+				fresh.Log = append(fresh.Log, "$ shell exited; repository refreshed")
+			}
+			m.repos[msg.index] = fresh
+			m.appendGlobal("↻ " + fresh.Name + " — refreshed after shell")
+
+			if fresh.State == StateAttention {
+				if m.decisionIndex < 0 || m.decisionIndex >= len(m.repos) || m.repos[m.decisionIndex].State != StateAttention {
+					m.decisionIndex = msg.index
+				}
+			} else if m.decisionIndex == msg.index {
+				m.decisionIndex = m.findNextAttention(msg.index)
+			}
+
+			if isSafeAutoUpdate(fresh) {
+				m.enqueueJob(msg.index, jobUpdateTarget)
+				cmds = append(cmds, m.startQueuedJobs()...)
+			}
+		}
+
 	case tea.KeyPressMsg:
 		key := msg.String()
 
@@ -64,19 +91,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.confirm != confirmNone {
-			switch key {
-			case "y", "Y", "enter":
-				idx := m.confirmIndex
-				m.confirm = confirmNone
-				m.confirmIndex = -1
-				if idx >= 0 && idx < len(m.repos) {
-					m.enqueueJob(idx, jobDiscardAndUpdate)
-					m.advanceDecision(idx)
-					cmds = append(cmds, m.startQueuedJobs()...)
+			mode := m.confirm
+			idx := m.confirmIndex
+			switch mode {
+			case confirmDiscardSelected:
+				switch key {
+				case "y", "Y", "enter":
+					m.confirm = confirmNone
+					m.confirmIndex = -1
+					if idx >= 0 && idx < len(m.repos) {
+						m.enqueueJob(idx, jobDiscardAndUpdate)
+						m.advanceDecision(idx)
+						cmds = append(cmds, m.startQueuedJobs()...)
+					}
+				case "n", "N", "esc", "q":
+					m.confirm = confirmNone
+					m.confirmIndex = -1
 				}
-			case "n", "N", "esc", "q":
-				m.confirm = confirmNone
-				m.confirmIndex = -1
+			case confirmShellSelected:
+				switch key {
+				case "y", "Y", "enter":
+					m.confirm = confirmNone
+					m.confirmIndex = -1
+					if idx >= 0 && idx < len(m.repos) && m.repos[idx].State != StateUpdating {
+						cmds = append(cmds, shellCmd(idx, m.repos[idx]))
+					}
+				case "n", "N", "esc", "q":
+					m.confirm = confirmNone
+					m.confirmIndex = -1
+				}
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -106,6 +149,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scanning = true
 				m.scanErr = nil
 				cmds = append(cmds, scanCmd(m.cfg))
+			}
+		case "t":
+			if idx, ok := m.selectedRepoIndex(); ok && m.repos[idx].State != StateUpdating {
+				m.confirm = confirmShellSelected
+				m.confirmIndex = idx
 			}
 		case "s":
 			if idx, ok := m.actionRepoIndex(); ok {
