@@ -263,7 +263,7 @@ func discardAndUpdateRepo(repo Repo, cfg Config) Repo {
 
 	discardLog := []string{
 		"$ git reset --hard HEAD",
-		"$ git clean -fd",
+		"$ git clean -ffd",
 	}
 
 	if cfg.DryRun {
@@ -287,7 +287,7 @@ func discardAndUpdateRepo(repo Repo, cfg Config) Repo {
 		return repo
 	}
 
-	out, err = gitCombinedOutput(repo.Path, "clean", "-fd")
+	out, err = gitCombinedOutput(repo.Path, "clean", "-ffd")
 	if strings.TrimSpace(out) != "" {
 		discardLog = append(discardLog, splitLines(out)...)
 	}
