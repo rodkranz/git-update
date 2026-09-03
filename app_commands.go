@@ -64,11 +64,15 @@ func shellCmd(index int, repo Repo) tea.Cmd {
 }
 
 func nativeShellCommand(repo Repo) *exec.Cmd {
-	shell := strings.TrimSpace(os.Getenv("SHELL"))
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	cmd := exec.Command(shell) //nolint:gosec // The shell is intentionally selected from the user's SHELL environment variable.
+	cmd := exec.Command(nativeShellPath()) //nolint:gosec // The shell is intentionally selected from the user's SHELL environment variable.
 	cmd.Dir = repo.Path
 	return cmd
+}
+
+func nativeShellPath() string {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" {
+		return "/bin/sh"
+	}
+	return shell
 }
