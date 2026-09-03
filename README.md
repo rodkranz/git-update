@@ -23,19 +23,80 @@ Because the executable is named `git-update`, Git exposes it as:
 git update ~/Projects
 ```
 
+## Requirements
+
+- Go 1.25+
+- Git
+- Make
+
+Check your environment with:
+
+```bash
+make doctor
+```
+
+## Make commands
+
+Run:
+
+```bash
+make help
+```
+
+Available commands include:
+
+```text
+make doctor      Check Go, Git and install path
+make deps        Prepare Go dependencies
+make tools       Install development tools into .bin
+make fmt         Format Go code
+make fmt-check   Verify formatting
+make vet         Run go vet
+make test        Run tests with race detector and coverage
+make coverage    Show coverage details
+make lint        Run the pinned golangci-lint version
+make build       Build bin/git-update
+make install     Install git-update into GOBIN/GOPATH/bin
+make uninstall   Remove the installed binary
+make run         Run from source
+make ci          Run all validation checks
+make clean       Remove build output
+make distclean   Remove build output and local development tools
+```
+
 ## Build
 
-Requirements: Go 1.25+ and Git in `PATH`.
-
 ```bash
-go build -trimpath -o git-update .
+make build
 ```
 
-Or:
+The binary will be created at:
+
+```text
+bin/git-update
+```
+
+`make build` prepares the Go module dependencies automatically before compiling.
+
+## Install
 
 ```bash
-./install.sh
+make install
 ```
+
+The binary is installed into `go env GOBIN`. If `GOBIN` is empty, it falls back to:
+
+```text
+$(go env GOPATH)/bin
+```
+
+Make sure that directory is in your `PATH`. After installation:
+
+```bash
+git update ~/Projects
+```
+
+`./install.sh` is also available and delegates to `make install`.
 
 ## Usage
 
@@ -86,13 +147,13 @@ Coverage includes:
 
 GitHub Actions runs on every pull request and push to `main`, and can also be started manually.
 
-The pipeline has three validation gates:
+The pipeline validates the same Make targets used locally:
 
-1. **Test** — `go test -race` with coverage.
-2. **Lint** — `golangci-lint` pinned to `v2.13.2`.
-3. **Build** — builds on Linux and macOS.
+1. **Test** — `make test`.
+2. **Lint** — `make lint`.
+3. **Build** — `make build` on Linux and macOS.
 
-Run the equivalent checks locally with:
+Run everything locally with:
 
 ```bash
 make ci
