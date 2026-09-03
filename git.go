@@ -1,0 +1,218 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+type RepoState int
+
+const (
+	StateReady RepoState = iota
+	StateAttention
+	StateUpdating
+	StateUpdated
+	StateSkipped
+	StateFailed
+)
+
+type Repo struct {
+	Path       string
+	Name       string
+	Branch     string
+	Changes    []string
+	InProgress bool
+	State      RepoState
+	Message    string
+	Log        []string
+}
+
+func inspectRepo(path, targetBranch string) Repo {
+	repo := Repo{Path: path, Name: filepath.Base(path), State: StateReady}
+	branch, err := gitOutput(path, "branch", "--show-current")
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = err.Error()
+		return repo
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		branch = "DETACHED HEAD"
+	}
+	repo.Branch = branch
+
+	status, err := gitOutput(path, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = err.Error()
+		return repo
+	}
+	for _, line := range strings.Split(status, "\n") {
+		if strings.TrimSpace(line) != "" {
+			repo.Changes = append(repo.Changes, line)
+		}
+	}
+
+	repo.InProgress = inProgressOperation(path)
+	if repo.InProgress {
+		repo.State = StateAttention
+		repo.Message = "merge/rebase/cherry-pick/revert in progress"
+	} else if repo.Branch != targetBranch || len(repo.Changes) > 0 {
+		repo.State = StateAttention
+		switch {
+		case repo.Branch != targetBranch && len(repo.Changes) > 0:
+			repo.Message = "branch change and local changes require confirmation"
+		case repo.Branch != targetBranch:
+			repo.Message = "not on target branch"
+		default:
+			repo.Message = "local changes require confirmation"
+		}
+	} else {
+		repo.Message = "ready to update"
+	}
+	return repo
+}
+
+func updateRepo(repo Repo, cfg Config, allowSwitch, allowDirty bool) Repo {
+	repo.State = StateUpdating
+	repo.Log = nil
+	if repo.InProgress {
+		repo.State = StateSkipped
+		repo.Message = "operation in progress; skipped"
+		return repo
+	}
+	if repo.Branch != cfg.Branch && !allowSwitch {
+		repo.State = StateSkipped
+		repo.Message = "requires branch confirmation"
+		return repo
+	}
+	if len(repo.Changes) > 0 && !allowDirty {
+		repo.State = StateSkipped
+		repo.Message = "requires local-change confirmation"
+		return repo
+	}
+
+	if repo.Branch != cfg.Branch {
+		if cfg.DryRun {
+			repo.Log = append(repo.Log, "$ git switch "+cfg.Branch+"  # dry-run")
+		} else {
+			repo.Log = append(repo.Log, "$ git switch "+cfg.Branch)
+			out, err := switchToTarget(repo.Path, cfg.Branch)
+			if strings.TrimSpace(out) != "" {
+				repo.Log = append(repo.Log, splitLines(out)...)
+			}
+			if err != nil {
+				repo.State = StateFailed
+				repo.Message = "switch failed: " + err.Error()
+				return repo
+			}
+			repo.Branch = cfg.Branch
+		}
+	}
+
+	if cfg.DryRun {
+		repo.Log = append(repo.Log, "$ git pull --ff-only origin "+cfg.Branch+"  # dry-run")
+		repo.State = StateUpdated
+		repo.Message = "dry-run complete"
+		return repo
+	}
+
+	repo.Log = append(repo.Log, "$ git pull --ff-only origin "+cfg.Branch)
+	out, err := gitCombinedOutput(repo.Path, "pull", "--ff-only", "origin", cfg.Branch)
+	if strings.TrimSpace(out) != "" {
+		repo.Log = append(repo.Log, splitLines(out)...)
+	}
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = "pull failed: " + err.Error()
+		return repo
+	}
+	fresh := inspectRepo(repo.Path, cfg.Branch)
+	fresh.Log = repo.Log
+	fresh.State = StateUpdated
+	fresh.Message = lastMeaningfulLine(out, "updated")
+	return fresh
+}
+
+func switchToTarget(path, branch string) (string, error) {
+	if gitSuccess(path, "show-ref", "--verify", "--quiet", "refs/heads/"+branch) {
+		return gitCombinedOutput(path, "switch", branch)
+	}
+	if gitSuccess(path, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch) {
+		return gitCombinedOutput(path, "switch", "--track", "-c", branch, "origin/"+branch)
+	}
+	return "", fmt.Errorf("neither local %q nor origin/%s exists", branch, branch)
+}
+
+func inProgressOperation(path string) bool {
+	gitDir, err := gitOutput(path, "rev-parse", "--git-dir")
+	if err != nil {
+		return false
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	for _, marker := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"} {
+		if _, err := os.Stat(filepath.Join(gitDir, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func gitOutput(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+func gitCombinedOutput(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return string(out), errors.New(msg)
+	}
+	return string(out), nil
+}
+
+func gitSuccess(dir string, args ...string) bool {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run() == nil
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func lastMeaningfulLine(s, fallback string) string {
+	lines := splitLines(s)
+	if len(lines) == 0 {
+		return fallback
+	}
+	return lines[len(lines)-1]
+}
