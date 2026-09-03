@@ -31,8 +31,8 @@ func (m model) renderRepoDetails(r Repo, width, height int) string {
 		}
 	}
 
-	if r.State == StateAttention {
-		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Choose an action"))
+	if r.State != StateUpdating {
+		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Actions"))
 		lines = append(lines, m.renderActions(r))
 	}
 
@@ -153,7 +153,7 @@ func (m model) renderConfirm(width, height int) string {
 	if len(r.Changes) > maxChanges {
 		changes = append(changes, fmt.Sprintf("  … and %d more", len(r.Changes)-maxChanges))
 	}
-	warning := "This permanently removes tracked, staged, and untracked changes.\nIgnored files are kept."
+	warning := "This permanently removes tracked, staged, untracked changes, and untracked nested Git directories.\nIgnored files are kept."
 	if m.cfg.DryRun {
 		warning = "DRY RUN: no files will be changed."
 	}
