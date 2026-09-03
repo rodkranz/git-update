@@ -11,10 +11,14 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 - recursively finds top-level Git repositories;
 - ignores nested repositories and submodule-style `.git` files;
 - shows current branch and local changes;
-- prompts before switching branches or continuing with a dirty worktree;
-- never runs stash, reset, clean, force checkout or force pull;
+- provides explicit `Update`, `Discard & Update`, and `SKIP` actions;
+- requires confirmation before switching branches or continuing with a dirty worktree;
+- requires a separate destructive confirmation before discarding local changes;
+- never stashes, force-checks out, force-pulls, or discards changes automatically;
+- `Discard & Update` removes tracked/staged changes with `git reset --hard HEAD` and untracked files with `git clean -fd`; ignored files are preserved;
 - pulls with `git pull --ff-only origin <branch>`;
 - updates clean repositories in parallel (4 workers by default);
+- keeps manually skipped repositories out of `Update All` until the next rescan;
 - supports `--dry-run`.
 
 Because the executable is named `git-update`, Git exposes it as:
@@ -113,14 +117,32 @@ git update ~/Projects --branch main
 git update ~/Projects --workers 8
 ```
 
-Keys:
+### Keys
 
 - `↑/↓` or `j/k`: select repository
-- `u` or `Enter`: update selected repository
-- `a`: update all safe repositories
-- `r`: rescan
+- `u` or `Enter`: update selected repository; local changes are kept
+- `d`: discard local tracked/staged/untracked changes and then update; requires destructive confirmation
+- `s`: SKIP selected repository for the current session
+- `a`: update all safe repositories; skipped and attention-required repositories are not modified
+- `r`: rescan repositories; this resets session SKIP states
 - `q`: quit
-- `y/n`: confirm/cancel actions that need attention
+- `y`/`Enter`: confirm a pending action
+- `n`/`Esc`: cancel a pending action
+
+## Safety model
+
+`Update` is non-destructive. It may switch to the target branch after confirmation, but it does not reset, clean, stash, or delete local work.
+
+`Discard & Update` is intentionally destructive and is only available when local changes exist. Before running it, the UI shows the affected changes and asks for a second confirmation. It executes:
+
+```bash
+git reset --hard HEAD
+git clean -fd
+```
+
+This removes tracked, staged, and untracked changes. Git-ignored files are not removed because `git clean` is intentionally called without `-x` or `-X`.
+
+`SKIP` only changes the in-memory state of the current session. It does not touch the repository.
 
 ## Tests
 
@@ -141,7 +163,10 @@ Coverage includes:
 - confirmation safety rules;
 - dry-run behavior;
 - branch switching;
-- real fast-forward pull against a temporary bare remote.
+- real fast-forward pull against a temporary bare remote;
+- destructive discard of tracked, staged, and untracked changes;
+- preservation of ignored files during discard;
+- non-destructive discard behavior in dry-run mode.
 
 ## CI
 
