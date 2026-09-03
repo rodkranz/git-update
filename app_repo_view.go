@@ -33,7 +33,12 @@ func (m model) renderRepoDetails(r Repo, width, height int) string {
 
 	if r.State != StateUpdating {
 		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Actions"))
-		lines = append(lines, m.renderActions(r))
+		actions := m.renderActions(r)
+		if actions != "" {
+			actions += "    "
+		}
+		actions += actionKey("t", "Shell here")
+		lines = append(lines, actions)
 	}
 
 	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Activity"))
@@ -104,6 +109,9 @@ func (m model) renderFooter(width int) string {
 		if !r.InProgress && r.TargetBranch != "" && len(r.Changes) > 0 {
 			parts = append(parts, "d discard+update")
 		}
+		if _, selected := m.selectedRepoIndex(); selected && r.State != StateUpdating {
+			parts = append(parts, "t shell here")
+		}
 		parts = append(parts, "s SKIP", "g all", "? shortcuts", "q quit")
 		keys = strings.Join(parts, "   ")
 	}
@@ -111,7 +119,12 @@ func (m model) renderFooter(width int) string {
 		keys = "? close shortcuts   esc close"
 	}
 	if m.confirm != confirmNone {
-		keys = "y/enter confirm discard   n/esc cancel"
+		switch m.confirm {
+		case confirmShellSelected:
+			keys = "enter open shell   esc cancel"
+		default:
+			keys = "y/enter confirm discard   n/esc cancel"
+		}
 	}
 	keysStyled := lipgloss.NewStyle().Foreground(muted).Render(keys)
 	statusStyled := lipgloss.NewStyle().Foreground(text).Render(status)
@@ -144,6 +157,13 @@ func (m model) renderConfirm(width, height int) string {
 	if m.confirmIndex < 0 || m.confirmIndex >= len(m.repos) {
 		return ""
 	}
+	if m.confirm == confirmShellSelected {
+		return m.renderShellConfirm(width, height)
+	}
+	if m.confirm != confirmDiscardSelected {
+		return ""
+	}
+
 	r := m.repos[m.confirmIndex]
 	maxChanges := min(len(r.Changes), 8)
 	changes := make([]string, 0, maxChanges+1)
@@ -163,6 +183,32 @@ func (m model) renderConfirm(width, height int) string {
 	}
 	message := fmt.Sprintf("Discard local changes in %s, then %s?\n\n%s\n\n%s\n\n[y] Discard & Continue    [n] Cancel", r.Name, action, strings.Join(changes, "\n"), warning)
 	modal := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(red).Padding(1, 2).Width(min(76, max(40, width-10))).Render(message)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+}
+
+func (m model) renderShellConfirm(width, height int) string {
+	r := m.repos[m.confirmIndex]
+	modalWidth := min(78, max(46, width-10))
+	pathWidth := max(20, modalWidth-6)
+	message := strings.Join([]string{
+		titleStyle.Render("Open shell"),
+		"",
+		labelValue("Repository", r.Name),
+		labelValue("Path", truncate(r.Path, pathWidth)),
+		labelValue("Shell", nativeShellPath()),
+		"",
+		"A native shell will temporarily replace Git Update.",
+		"Type \"exit\" to return to the UI.",
+		"The repository status will be refreshed automatically when you return.",
+		"",
+		"[Enter] Open shell    [Esc] Cancel",
+	}, "\n")
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(accent2).
+		Padding(1, 2).
+		Width(modalWidth).
+		Render(message)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
 }
 
