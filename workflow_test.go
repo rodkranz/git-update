@@ -70,7 +70,7 @@ func TestAllModeKeepsGlobalSelectionWhileAdvancingDecisions(t *testing.T) {
 	}
 }
 
-func TestProjectModeMovesToNextAttention(t *testing.T) {
+func TestProjectModeKeepsManualSelectionWhileDecisionAdvances(t *testing.T) {
 	m := model{
 		repos: []Repo{
 			{State: StateUpdating},
@@ -78,15 +78,58 @@ func TestProjectModeMovesToNextAttention(t *testing.T) {
 			{State: StateUpdated},
 			{State: StateAttention},
 		},
-		cursor:        1, // repo index 0; 0 itself is All repositories
+		cursor:        1,
 		decisionIndex: 0,
 	}
 	m.advanceDecision(0)
-	if m.cursor != 2 {
-		t.Fatalf("cursor = %d, want list item 2 (repo index 1)", m.cursor)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want selected repository to remain selected", m.cursor)
 	}
 	if m.decisionIndex != 1 {
 		t.Fatalf("decisionIndex = %d, want 1", m.decisionIndex)
+	}
+}
+
+func TestSelectedSkippedRepoAllowsManualActions(t *testing.T) {
+	m := model{
+		repos: []Repo{{
+			State:        StateSkipped,
+			Branch:       "feature/test",
+			TargetBranch: "main",
+			Changes:      []string{"?? scratch.txt"},
+		}},
+		cursor: 1,
+	}
+	idx, ok := m.actionRepoIndex()
+	if !ok {
+		t.Fatal("manually selected skipped repository should accept valid actions")
+	}
+	if idx != 0 {
+		t.Fatalf("index = %d, want 0", idx)
+	}
+}
+
+func TestDiscardAndUpdateRemovesNestedUntrackedGitRepository(t *testing.T) {
+	_, work, _ := newRemoteFixtureWithBranch(t, "main")
+	nested := filepath.Join(work, ".claude", "worktrees", "scratch")
+	mustMkdir(t, nested)
+	runGit(t, nested, "init", "--initial-branch=main")
+	mustWriteFile(t, filepath.Join(nested, "scratch.txt"), "temporary\n")
+
+	repo := inspectRepo(work, "")
+	if len(repo.Changes) == 0 {
+		t.Fatal("expected nested repository to appear as an untracked local change")
+	}
+
+	got := discardAndUpdateRepo(repo, Config{})
+	if got.State != StateUpdated {
+		t.Fatalf("unexpected state after discard: %+v", got)
+	}
+	if len(got.Changes) != 0 {
+		t.Fatalf("local changes remain after discard: %v", got.Changes)
+	}
+	if _, err := os.Stat(nested); !os.IsNotExist(err) {
+		t.Fatalf("nested untracked Git repository still exists after discard; err=%v", err)
 	}
 }
 
