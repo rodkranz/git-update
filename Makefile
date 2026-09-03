@@ -8,11 +8,11 @@ TOOLS_DIR ?= .bin
 BIN_PATH := $(BUILD_DIR)/$(BINARY)
 
 GOLANGCI_LINT_VERSION ?= v2.13.2
-GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint
+GOLANGCI_LINT ?= $(TOOLS_DIR)/golangci-lint
 
 GO_BIN := $(shell $(GO) env GOBIN 2>/dev/null)
 ifeq ($(strip $(GO_BIN)),)
-INSTALL_DIR ?= $(shell $(GO) env GOPATH)/bin
+INSTALL_DIR ?= $(shell $(GO) env GOPATH 2>/dev/null)/bin
 else
 INSTALL_DIR ?= $(GO_BIN)
 endif
@@ -36,10 +36,15 @@ deps: doctor ## Download and normalize Go dependencies
 
 tools: doctor ## Install development tools locally under .bin
 	@mkdir -p $(TOOLS_DIR)
-	@if [ ! -x "$(GOLANGCI_LINT)" ] || ! "$(GOLANGCI_LINT)" version 2>/dev/null | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))"; then \
-		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION)..."; \
-		GOBIN="$(abspath $(TOOLS_DIR))" $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
-	fi
+	@if command -v "$(GOLANGCI_LINT)" >/dev/null 2>&1 && "$(GOLANGCI_LINT)" version 2>/dev/null | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))"; then \
+		exit 0; \
+	fi; \
+	if [ "$(GOLANGCI_LINT)" != "$(TOOLS_DIR)/golangci-lint" ]; then \
+		echo "ERROR: $(GOLANGCI_LINT) is missing or is not version $(GOLANGCI_LINT_VERSION)"; \
+		exit 1; \
+	fi; \
+	echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION)..."; \
+	GOBIN="$(abspath $(TOOLS_DIR))" $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 fmt: ## Format Go source files
 	gofmt -w $$(find . -type f -name '*.go' -not -path './vendor/*')
