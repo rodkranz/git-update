@@ -21,6 +21,8 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 - shows repository-specific output when you select a repository;
 - keeps common keyboard shortcuts visible in the footer;
 - opens a full keyboard shortcuts modal with `?`;
+- opens the user's native `$SHELL` in the selected repository with `t` and returns to the TUI after `exit`;
+- automatically refreshes repository state after returning from a shell session;
 - supports pulling the current branch without switching;
 - supports switching to the detected default branch and updating while keeping local changes;
 - provides destructive `Discard changes & Update` only after explicit confirmation;
@@ -123,7 +125,7 @@ For each repository it tries, in order:
 4. an unambiguous local `main` or `master`;
 5. the current branch when it is already `main` or `master`.
 
-If the default branch cannot be determined safely, the repository is marked as needing attention. The app will not guess. You can pull the current branch, SKIP it, or restart with an explicit `--branch` override.
+If the default branch cannot be determined safely, the repository is marked as needing attention. The app will not guess. You can pull the current branch, SKIP it, open a shell, or restart with an explicit `--branch` override.
 
 ## All repositories mode
 
@@ -144,7 +146,7 @@ In this mode:
 - after you choose an action, the next repository needing input is shown immediately;
 - background updates continue while you make decisions.
 
-Selecting a specific repository changes the right panel to that repository's branch, target, local changes and Git output.
+Selecting a specific repository changes the right panel to that repository's branch, target, local changes, actions and Git output.
 
 ## Decision flow
 
@@ -184,6 +186,26 @@ main/master/default + clean
 
 After choosing `m`, `p`, `d` (after confirmation), or `s`, the decision flow immediately advances. The selected Git operation runs in the background when a worker is available.
 
+## Shell here
+
+When a specific repository is selected, press:
+
+```text
+[t] Shell here
+```
+
+A confirmation modal shows the repository, path and shell. After confirmation, Bubble Tea temporarily releases the terminal and starts the user's native `$SHELL` with the selected repository as the working directory.
+
+Use the shell normally, then run:
+
+```bash
+exit
+```
+
+`git-update` resumes in the same terminal and immediately re-inspects the selected repository. If the shell leaves the repository clean and on its detected default branch, the normal automatic update flow can continue.
+
+The shell action is not available while that repository already has a `git-update` operation running.
+
 ## Keys
 
 The footer always shows the common shortcuts, including `? shortcuts`. Press `?` to open the full keyboard shortcuts modal; press `?` or `Esc` to close it.
@@ -194,13 +216,15 @@ The footer always shows the common shortcuts, including `? shortcuts`. Press `?`
 - `m`: switch to the repository's detected default branch and update it
 - `p`: pull the currently checked-out branch
 - `d`: discard local tracked/staged/untracked changes and update the default branch; requires destructive confirmation
+- `t`: open the native shell in the manually selected repository
 - `s`: SKIP the repository for the current session
 - `r`: rescan when background work is finished
 - `?`: open or close the keyboard shortcuts modal
 - `q`: quit
 - `Ctrl+C`: quit
-- `y` / `Enter`: confirm a pending discard
-- `n` / `Esc`: cancel a pending discard
+- `Enter`: open a confirmed shell or confirm a pending action
+- `y`: confirm a pending discard
+- `n` / `Esc`: cancel a pending confirmation
 
 ## Safety model
 
@@ -218,10 +242,10 @@ git pull --ff-only origin <detected-default-branch>
 
 ```bash
 git reset --hard HEAD
-git clean -fd
+git clean -ffd
 ```
 
-Tracked, staged and untracked changes are removed. Git-ignored files are preserved because `git clean` is intentionally called without `-x` or `-X`.
+Tracked, staged, untracked changes and untracked nested Git directories are removed. Git-ignored files are preserved because `git clean` is intentionally called without `-x` or `-X`.
 
 ## Tests
 
@@ -231,7 +255,7 @@ The test suite creates isolated temporary Git repositories, bare remotes, commit
 make test
 ```
 
-Coverage includes repository discovery, default-branch detection for both `main` and `master`, branch overrides, clean/dirty worktrees, current-branch pulls, fast-forward updates, decision advancement, All mode, footer/help shortcuts, discard behavior and dry-run safety.
+Coverage includes repository discovery, default-branch detection for both `main` and `master`, branch overrides, clean/dirty worktrees, current-branch pulls, fast-forward updates, decision advancement, All mode, footer/help shortcuts, native-shell command setup, post-shell repository refresh, discard behavior and dry-run safety.
 
 ## CI
 
