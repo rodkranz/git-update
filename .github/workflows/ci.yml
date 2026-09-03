@@ -36,7 +36,7 @@ jobs:
         run: make test
 
       - name: Show coverage
-        run: make coverage
+        run: go tool cover -func=coverage.out
 
   lint:
     name: Lint
@@ -51,8 +51,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          install-only: true
+
       - name: Run lint
-        run: make lint
+        run: make lint GOLANGCI_LINT=golangci-lint
 
   build:
     name: Build (${{ matrix.os }})
