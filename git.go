@@ -87,12 +87,12 @@ func updateRepo(repo Repo, cfg Config, allowSwitch, allowDirty bool) Repo {
 	}
 	if repo.Branch != cfg.Branch && !allowSwitch {
 		repo.State = StateSkipped
-		repo.Message = "requires branch decision"
+		repo.Message = "requires branch confirmation"
 		return repo
 	}
 	if len(repo.Changes) > 0 && !allowDirty {
 		repo.State = StateSkipped
-		repo.Message = "requires local-change decision"
+		repo.Message = "requires local-change confirmation"
 		return repo
 	}
 
@@ -153,7 +153,7 @@ func pullCurrentRepo(repo Repo, cfg Config, allowDirty bool) Repo {
 	}
 	if len(repo.Changes) > 0 && !allowDirty {
 		repo.State = StateSkipped
-		repo.Message = "requires local-change decision"
+		repo.Message = "requires local-change confirmation"
 		return repo
 	}
 
