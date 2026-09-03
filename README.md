@@ -11,14 +11,16 @@ Built with Bubble Tea v2, Bubbles v2 and Lip Gloss v2.
 - recursively finds top-level Git repositories;
 - ignores nested repositories and submodule-style `.git` files;
 - shows current branch and local changes;
-- provides explicit `Update`, `Discard & Update`, and `SKIP` actions;
-- requires confirmation before switching branches or continuing with a dirty worktree;
-- requires a separate destructive confirmation before discarding local changes;
+- automatically updates clean repositories already on the target branch;
+- runs repository updates in parallel (4 workers by default);
+- lets you keep working through repositories that need attention while background updates continue;
+- automatically moves to the next repository needing a decision after an action is selected;
+- supports pulling the current non-target branch without switching;
+- supports switching to the target branch and updating while keeping local changes;
+- provides destructive `Discard changes & Update` only after an explicit confirmation;
+- supports `SKIP` without touching the repository;
 - never stashes, force-checks out, force-pulls, or discards changes automatically;
-- `Discard & Update` removes tracked/staged changes with `git reset --hard HEAD` and untracked files with `git clean -fd`; ignored files are preserved;
 - pulls with `git pull --ff-only origin <branch>`;
-- updates clean repositories in parallel (4 workers by default);
-- keeps manually skipped repositories out of `Update All` until the next rescan;
 - supports `--dry-run`.
 
 Because the executable is named `git-update`, Git exposes it as:
@@ -117,23 +119,62 @@ git update ~/Projects --branch main
 git update ~/Projects --workers 8
 ```
 
+## Decision flow
+
+Repositories that are already on the target branch and have no local changes are automatically queued for update as soon as the scan finishes.
+
+For a clean repository on another branch:
+
+```text
+[m] Switch to <target> & Update
+[p] Pull current branch
+[s] SKIP
+```
+
+For a dirty repository already on the target branch:
+
+```text
+[p] Pull current branch (keep changes)
+[d] Discard changes & Update
+[s] SKIP
+```
+
+For a dirty repository on another branch:
+
+```text
+[m] Switch to <target> & Update (keep changes)
+[p] Pull current branch (keep changes)
+[d] Discard changes, switch to <target> & Update
+[s] SKIP
+```
+
+After selecting `m`, `p`, `d` (after confirmation), or `s`, the UI immediately moves to the next repository needing attention. The selected update is queued and runs in the background when a worker is available.
+
 ### Keys
 
 - `↑/↓` or `j/k`: select repository
-- `u` or `Enter`: update selected repository; local changes are kept
-- `d`: discard local tracked/staged/untracked changes and then update; requires destructive confirmation
+- `m`: switch to the target branch and update it
+- `p`: pull the currently checked-out branch
+- `d`: discard local tracked/staged/untracked changes and update the target branch; requires destructive confirmation
 - `s`: SKIP selected repository for the current session
-- `a`: update all safe repositories; skipped and attention-required repositories are not modified
-- `r`: rescan repositories; this resets session SKIP states
+- `r`: rescan when no background work is running
 - `q`: quit
-- `y`/`Enter`: confirm a pending action
-- `n`/`Esc`: cancel a pending action
+- `y`/`Enter`: confirm a pending discard
+- `n`/`Esc`: cancel a pending discard
 
 ## Safety model
 
-`Update` is non-destructive. It may switch to the target branch after confirmation, but it does not reset, clean, stash, or delete local work.
+Clean repositories on the target branch are safe and update automatically with:
 
-`Discard & Update` is intentionally destructive and is only available when local changes exist. Before running it, the UI shows the affected changes and asks for a second confirmation. It executes:
+```bash
+git pull --ff-only origin <target>
+```
+
+`Pull current branch` does not switch branches and does not discard local changes. If Git cannot fast-forward safely because of local work or branch history, the operation fails and the repository is shown as failed.
+
+`Switch to target & Update` keeps local changes. Git itself will block the branch switch if those changes cannot be carried safely to the target branch.
+
+`Discard changes & Update` is intentionally destructive and is only available when local changes exist. Before running it, the UI shows the affected changes and asks for confirmation. It executes:
 
 ```bash
 git reset --hard HEAD
@@ -160,10 +201,12 @@ Coverage includes:
 - clean/dirty worktrees;
 - different branches;
 - merge/rebase-style operation detection;
-- confirmation safety rules;
 - dry-run behavior;
 - branch switching;
-- real fast-forward pull against a temporary bare remote;
+- automatic-update classification;
+- moving to the next repository needing attention;
+- pulling the currently checked-out non-target branch;
+- real fast-forward pulls against temporary bare remotes;
 - destructive discard of tracked, staged, and untracked changes;
 - preservation of ignored files during discard;
 - non-destructive discard behavior in dry-run mode.

@@ -65,14 +65,14 @@ func inspectRepo(path, targetBranch string) Repo {
 		repo.State = StateAttention
 		switch {
 		case repo.Branch != targetBranch && len(repo.Changes) > 0:
-			repo.Message = "branch change and local changes require confirmation"
+			repo.Message = "choose how to handle the current branch and local changes"
 		case repo.Branch != targetBranch:
-			repo.Message = "not on target branch"
+			repo.Message = "choose whether to update the target branch or pull the current branch"
 		default:
-			repo.Message = "local changes require confirmation"
+			repo.Message = "choose how to handle local changes before pulling"
 		}
 	} else {
-		repo.Message = "ready to update"
+		repo.Message = "ready for automatic update"
 	}
 	return repo
 }
@@ -87,12 +87,12 @@ func updateRepo(repo Repo, cfg Config, allowSwitch, allowDirty bool) Repo {
 	}
 	if repo.Branch != cfg.Branch && !allowSwitch {
 		repo.State = StateSkipped
-		repo.Message = "requires branch confirmation"
+		repo.Message = "requires branch decision"
 		return repo
 	}
 	if len(repo.Changes) > 0 && !allowDirty {
 		repo.State = StateSkipped
-		repo.Message = "requires local-change confirmation"
+		repo.Message = "requires local-change decision"
 		return repo
 	}
 
@@ -134,7 +134,51 @@ func updateRepo(repo Repo, cfg Config, allowSwitch, allowDirty bool) Repo {
 	fresh := inspectRepo(repo.Path, cfg.Branch)
 	fresh.Log = repo.Log
 	fresh.State = StateUpdated
-	fresh.Message = lastMeaningfulLine(out, "updated")
+	fresh.Message = lastMeaningfulLine(out, "target branch updated")
+	return fresh
+}
+
+func pullCurrentRepo(repo Repo, cfg Config, allowDirty bool) Repo {
+	repo.State = StateUpdating
+	repo.Log = nil
+	if repo.InProgress {
+		repo.State = StateSkipped
+		repo.Message = "operation in progress; skipped"
+		return repo
+	}
+	if repo.Branch == "" || repo.Branch == "DETACHED HEAD" {
+		repo.State = StateFailed
+		repo.Message = "cannot pull a detached HEAD"
+		return repo
+	}
+	if len(repo.Changes) > 0 && !allowDirty {
+		repo.State = StateSkipped
+		repo.Message = "requires local-change decision"
+		return repo
+	}
+
+	if cfg.DryRun {
+		repo.Log = append(repo.Log, "$ git pull --ff-only origin "+repo.Branch+"  # dry-run")
+		repo.State = StateUpdated
+		repo.Message = "dry-run complete"
+		return repo
+	}
+
+	branch := repo.Branch
+	repo.Log = append(repo.Log, "$ git pull --ff-only origin "+branch)
+	out, err := gitCombinedOutput(repo.Path, "pull", "--ff-only", "origin", branch)
+	if strings.TrimSpace(out) != "" {
+		repo.Log = append(repo.Log, splitLines(out)...)
+	}
+	if err != nil {
+		repo.State = StateFailed
+		repo.Message = "pull failed: " + err.Error()
+		return repo
+	}
+	fresh := inspectRepo(repo.Path, cfg.Branch)
+	fresh.Log = repo.Log
+	fresh.State = StateUpdated
+	fresh.Message = lastMeaningfulLine(out, branch+" updated")
 	return fresh
 }
 

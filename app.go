@@ -19,11 +19,24 @@ type repoUpdatedMsg struct {
 	repo  Repo
 }
 
+type jobAction int
+
+const (
+	jobUpdateTarget jobAction = iota
+	jobSwitchTargetKeepChanges
+	jobPullCurrent
+	jobDiscardAndUpdate
+)
+
+type repoJob struct {
+	index  int
+	action jobAction
+}
+
 type confirmMode int
 
 const (
 	confirmNone confirmMode = iota
-	confirmUpdateSelected
 	confirmDiscardSelected
 )
 
@@ -40,7 +53,7 @@ type model struct {
 	confirm      confirmMode
 	confirmIndex int
 
-	queue  []int
+	queue  []repoJob
 	active int
 }
 
@@ -81,15 +94,20 @@ func scanCmd(cfg Config) tea.Cmd {
 	}
 }
 
-func updateRepoCmd(index int, repo Repo, cfg Config, allowSwitch, allowDirty bool) tea.Cmd {
+func repoJobCmd(job repoJob, repo Repo, cfg Config) tea.Cmd {
 	return func() tea.Msg {
-		return repoUpdatedMsg{index: index, repo: updateRepo(repo, cfg, allowSwitch, allowDirty)}
-	}
-}
-
-func discardAndUpdateRepoCmd(index int, repo Repo, cfg Config) tea.Cmd {
-	return func() tea.Msg {
-		return repoUpdatedMsg{index: index, repo: discardAndUpdateRepo(repo, cfg)}
+		var updated Repo
+		switch job.action {
+		case jobSwitchTargetKeepChanges:
+			updated = updateRepo(repo, cfg, true, true)
+		case jobPullCurrent:
+			updated = pullCurrentRepo(repo, cfg, true)
+		case jobDiscardAndUpdate:
+			updated = discardAndUpdateRepo(repo, cfg)
+		default:
+			updated = updateRepo(repo, cfg, false, false)
+		}
+		return repoUpdatedMsg{index: job.index, repo: updated}
 	}
 }
 
@@ -106,14 +124,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
 	case scanDoneMsg:
 		m.scanning = false
 		m.scanErr = msg.err
 		m.repos = msg.repos
 		m.queue = nil
-		if m.cursor >= len(m.repos) {
-			m.cursor = max(0, len(m.repos)-1)
+		m.active = 0
+		if msg.err == nil {
+			for i := range m.repos {
+				if isSafeAutoUpdate(m.repos[i], m.cfg.Branch) {
+					m.enqueueJob(i, jobUpdateTarget)
+				}
+			}
+			m.focusFirstAttention()
+			cmds = append(cmds, m.startQueuedJobs()...)
 		}
+
 	case repoUpdatedMsg:
 		if msg.index >= 0 && msg.index < len(m.repos) {
 			m.repos[msg.index] = msg.repo
@@ -121,30 +148,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.active > 0 {
 			m.active--
 		}
-		cmds = append(cmds, m.startQueuedUpdates()...)
+		cmds = append(cmds, m.startQueuedJobs()...)
+
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if m.confirm != confirmNone {
 			switch key {
 			case "y", "Y", "enter":
 				idx := m.confirmIndex
-				mode := m.confirm
 				m.confirm = confirmNone
 				m.confirmIndex = -1
-				if idx >= 0 && idx < len(m.repos) && m.active < m.cfg.Workers {
-					repo := m.repos[idx]
-					repo.State = StateUpdating
-					m.active++
-					switch mode {
-					case confirmDiscardSelected:
-						repo.Message = "discarding local changes and updating..."
-						m.repos[idx] = repo
-						cmds = append(cmds, discardAndUpdateRepoCmd(idx, repo, m.cfg))
-					default:
-						repo.Message = "updating..."
-						m.repos[idx] = repo
-						cmds = append(cmds, updateRepoCmd(idx, repo, m.cfg, true, true))
-					}
+				if idx >= 0 && idx < len(m.repos) {
+					m.enqueueJob(idx, jobDiscardAndUpdate)
+					m.advanceToNextAttention(idx)
+					cmds = append(cmds, m.startQueuedJobs()...)
 				}
 			case "n", "N", "esc", "q":
 				m.confirm = confirmNone
@@ -171,100 +188,145 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = len(m.repos) - 1
 			}
 		case "r":
-			if m.active == 0 {
+			if m.active == 0 && len(m.queue) == 0 {
 				m.scanning = true
 				m.scanErr = nil
-				m.queue = nil
 				cmds = append(cmds, scanCmd(m.cfg))
 			}
 		case "s":
-			if m.cursor >= 0 && m.cursor < len(m.repos) {
-				repo := m.repos[m.cursor]
-				if repo.State != StateUpdating {
-					m.removeFromQueue(m.cursor)
-					repo.State = StateSkipped
-					repo.Message = "skipped by user"
-					m.repos[m.cursor] = repo
+			if m.selectedNeedsAttention() {
+				idx := m.cursor
+				repo := m.repos[idx]
+				repo.State = StateSkipped
+				repo.Message = "skipped by user"
+				m.repos[idx] = repo
+				m.advanceToNextAttention(idx)
+			}
+		case "m":
+			if m.selectedNeedsAttention() {
+				idx := m.cursor
+				repo := m.repos[idx]
+				if !repo.InProgress && repo.Branch != m.cfg.Branch {
+					m.enqueueJob(idx, jobSwitchTargetKeepChanges)
+					m.advanceToNextAttention(idx)
+					cmds = append(cmds, m.startQueuedJobs()...)
+				}
+			}
+		case "p":
+			if m.selectedNeedsAttention() {
+				idx := m.cursor
+				repo := m.repos[idx]
+				if !repo.InProgress && canPullCurrent(repo) {
+					m.enqueueJob(idx, jobPullCurrent)
+					m.advanceToNextAttention(idx)
+					cmds = append(cmds, m.startQueuedJobs()...)
 				}
 			}
 		case "d":
-			if m.cursor >= 0 && m.cursor < len(m.repos) && m.active < m.cfg.Workers {
+			if m.selectedNeedsAttention() {
 				repo := m.repos[m.cursor]
-				if repo.State != StateUpdating && !repo.InProgress && len(repo.Changes) > 0 {
+				if !repo.InProgress && len(repo.Changes) > 0 {
 					m.confirm = confirmDiscardSelected
 					m.confirmIndex = m.cursor
 				}
-			}
-		case "u", "enter":
-			if m.cursor >= 0 && m.cursor < len(m.repos) && m.active < m.cfg.Workers {
-				repo := m.repos[m.cursor]
-				if repo.State == StateUpdating || repo.InProgress {
-					break
-				}
-				m.removeFromQueue(m.cursor)
-				if repo.Branch != m.cfg.Branch || len(repo.Changes) > 0 {
-					m.confirm = confirmUpdateSelected
-					m.confirmIndex = m.cursor
-				} else {
-					repo.State = StateUpdating
-					repo.Message = "updating..."
-					m.repos[m.cursor] = repo
-					m.active++
-					cmds = append(cmds, updateRepoCmd(m.cursor, repo, m.cfg, false, false))
-				}
-			}
-		case "a":
-			if !m.scanning {
-				m.queue = nil
-				for i := range m.repos {
-					r := m.repos[i]
-					if r.InProgress || r.State == StateUpdating || r.State == StateSkipped {
-						continue
-					}
-					if r.Branch == m.cfg.Branch && len(r.Changes) == 0 {
-						m.queue = append(m.queue, i)
-					} else if r.State != StateFailed {
-						r.State = StateAttention
-						r.Message = "needs manual confirmation; skipped by Update All"
-						m.repos[i] = r
-					}
-				}
-				cmds = append(cmds, m.startQueuedUpdates()...)
 			}
 		}
 	}
 	return m, tea.Batch(cmds...)
 }
 
-func (m *model) removeFromQueue(index int) {
-	filtered := m.queue[:0]
-	for _, queued := range m.queue {
-		if queued != index {
-			filtered = append(filtered, queued)
-		}
-	}
-	m.queue = filtered
+func isSafeAutoUpdate(repo Repo, targetBranch string) bool {
+	return repo.State == StateReady && !repo.InProgress && repo.Branch == targetBranch && len(repo.Changes) == 0
 }
 
-func (m *model) startQueuedUpdates() []tea.Cmd {
+func canPullCurrent(repo Repo) bool {
+	return repo.Branch != "" && repo.Branch != "DETACHED HEAD"
+}
+
+func (m model) selectedNeedsAttention() bool {
+	return m.cursor >= 0 && m.cursor < len(m.repos) && m.repos[m.cursor].State == StateAttention
+}
+
+func (m *model) enqueueJob(index int, action jobAction) {
+	if index < 0 || index >= len(m.repos) {
+		return
+	}
+	repo := m.repos[index]
+	repo.State = StateUpdating
+	repo.Message = queuedMessage(action, m.cfg.Branch, repo.Branch)
+	m.repos[index] = repo
+	m.queue = append(m.queue, repoJob{index: index, action: action})
+}
+
+func queuedMessage(action jobAction, targetBranch, currentBranch string) string {
+	switch action {
+	case jobSwitchTargetKeepChanges:
+		return fmt.Sprintf("queued: switch to %s and update", targetBranch)
+	case jobPullCurrent:
+		return fmt.Sprintf("queued: pull %s", currentBranch)
+	case jobDiscardAndUpdate:
+		return fmt.Sprintf("queued: discard changes, switch to %s and update", targetBranch)
+	default:
+		return "queued: automatic update"
+	}
+}
+
+func runningMessage(action jobAction, targetBranch, currentBranch string) string {
+	switch action {
+	case jobSwitchTargetKeepChanges:
+		return fmt.Sprintf("switching to %s and updating...", targetBranch)
+	case jobPullCurrent:
+		return fmt.Sprintf("pulling %s...", currentBranch)
+	case jobDiscardAndUpdate:
+		return fmt.Sprintf("discarding changes, switching to %s and updating...", targetBranch)
+	default:
+		return "updating..."
+	}
+}
+
+func (m *model) startQueuedJobs() []tea.Cmd {
 	var cmds []tea.Cmd
 	for m.active < m.cfg.Workers && len(m.queue) > 0 {
-		idx := m.queue[0]
+		job := m.queue[0]
 		m.queue = m.queue[1:]
-		if idx < 0 || idx >= len(m.repos) {
+		if job.index < 0 || job.index >= len(m.repos) {
 			continue
 		}
-		repo := m.repos[idx]
-		if repo.State == StateSkipped {
+		repo := m.repos[job.index]
+		if repo.State != StateUpdating {
 			continue
 		}
-		repo.State = StateUpdating
-		repo.Message = "updating..."
-		m.repos[idx] = repo
+		repo.Message = runningMessage(job.action, m.cfg.Branch, repo.Branch)
+		m.repos[job.index] = repo
 		m.active++
-		cmds = append(cmds, updateRepoCmd(idx, repo, m.cfg, false, false))
+		cmds = append(cmds, repoJobCmd(job, repo, m.cfg))
 	}
 	return cmds
+}
+
+func (m *model) focusFirstAttention() {
+	for i := range m.repos {
+		if m.repos[i].State == StateAttention {
+			m.cursor = i
+			return
+		}
+	}
+	if m.cursor >= len(m.repos) {
+		m.cursor = max(0, len(m.repos)-1)
+	}
+}
+
+func (m *model) advanceToNextAttention(after int) {
+	if len(m.repos) == 0 {
+		return
+	}
+	for offset := 1; offset <= len(m.repos); offset++ {
+		idx := (after + offset) % len(m.repos)
+		if m.repos[idx].State == StateAttention {
+			m.cursor = idx
+			return
+		}
+	}
 }
 
 func (m model) View() tea.View {
@@ -352,14 +414,19 @@ func (m model) renderRepoList(width, height int) string {
 
 func (m model) renderDetails(width, height int) string {
 	r := m.repos[m.cursor]
-	lines := []string{titleStyle.Render(r.Name), "", labelValue("Status", stateLabel(r.State)), labelValue("Branch", r.Branch), labelValue("Target", m.cfg.Branch), labelValue("Path", r.Path)}
+	lines := []string{
+		titleStyle.Render(r.Name),
+		"",
+		labelValue("Status", stateLabel(r.State)),
+		labelValue("Branch", r.Branch),
+		labelValue("Target", m.cfg.Branch),
+		labelValue("Path", r.Path),
+	}
 	if r.InProgress {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(red).Bold(true).Render("Git operation in progress"))
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render(fmt.Sprintf("Local changes (%d)", len(r.Changes))))
-	if len(r.Changes) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(green).Render("✓ clean"))
-	} else {
+	if len(r.Changes) > 0 {
+		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render(fmt.Sprintf("Local changes (%d)", len(r.Changes))))
 		maxChanges := max(2, (height-18)/2)
 		for i, change := range r.Changes {
 			if i >= maxChanges {
@@ -370,14 +437,9 @@ func (m model) renderDetails(width, height int) string {
 		}
 	}
 
-	if r.State != StateUpdating {
-		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Actions"))
-		actions := []string{actionKey("u", "Update")}
-		if len(r.Changes) > 0 && !r.InProgress {
-			actions = append(actions, actionKey("d", "Discard & Update"))
-		}
-		actions = append(actions, actionKey("s", "SKIP"))
-		lines = append(lines, strings.Join(actions, "    "))
+	if r.State == StateAttention {
+		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Choose an action"))
+		lines = append(lines, m.renderActions(r))
 	}
 
 	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(accent2).Render("Activity"))
@@ -392,6 +454,40 @@ func (m model) renderDetails(width, height int) string {
 		}
 	}
 	return panelStyle.Width(width).Height(height).Render(strings.Join(lines, "\n"))
+}
+
+func (m model) renderActions(r Repo) string {
+	if r.InProgress {
+		return actionKey("s", "SKIP")
+	}
+
+	var actions []string
+	wrongBranch := r.Branch != m.cfg.Branch
+	dirty := len(r.Changes) > 0
+
+	if wrongBranch {
+		switchLabel := fmt.Sprintf("Switch to %s & Update", m.cfg.Branch)
+		if dirty {
+			switchLabel += " (keep changes)"
+		}
+		actions = append(actions, actionKey("m", switchLabel))
+	}
+	if canPullCurrent(r) {
+		pullLabel := fmt.Sprintf("Pull %s", r.Branch)
+		if dirty {
+			pullLabel += " (keep changes)"
+		}
+		actions = append(actions, actionKey("p", pullLabel))
+	}
+	if dirty {
+		discardLabel := "Discard changes & Update"
+		if wrongBranch {
+			discardLabel = fmt.Sprintf("Discard changes, switch to %s & Update", m.cfg.Branch)
+		}
+		actions = append(actions, actionKey("d", discardLabel))
+	}
+	actions = append(actions, actionKey("s", "SKIP"))
+	return strings.Join(actions, "    ")
 }
 
 func (m model) renderFooter(width int) string {
@@ -410,18 +506,27 @@ func (m model) renderFooter(width int) string {
 	}
 	status := fmt.Sprintf(" ✓ %d updated   ! %d attention   ↷ %d skipped   ✗ %d failed", updated, attention, skipped, failed)
 	if m.active > 0 || len(m.queue) > 0 {
-		status += fmt.Sprintf("   %s %d updating / %d queued", m.spinner.View(), m.active, len(m.queue))
+		status += fmt.Sprintf("   %s %d running / %d queued", m.spinner.View(), m.active, len(m.queue))
 	}
 
-	keys := "↑↓/jk select   u update   s SKIP   a update all safe   r rescan   q quit"
-	if m.cursor >= 0 && m.cursor < len(m.repos) {
+	keys := "↑↓/jk select   r rescan   q quit"
+	if m.selectedNeedsAttention() {
 		r := m.repos[m.cursor]
-		if len(r.Changes) > 0 && !r.InProgress && r.State != StateUpdating {
-			keys = "↑↓/jk select   u update   d discard+update   s SKIP   a update all safe   r rescan   q quit"
+		parts := []string{"↑↓/jk select"}
+		if !r.InProgress && r.Branch != m.cfg.Branch {
+			parts = append(parts, "m switch+update")
 		}
+		if !r.InProgress && canPullCurrent(r) {
+			parts = append(parts, "p pull current")
+		}
+		if !r.InProgress && len(r.Changes) > 0 {
+			parts = append(parts, "d discard+update")
+		}
+		parts = append(parts, "s SKIP", "r rescan", "q quit")
+		keys = strings.Join(parts, "   ")
 	}
 	if m.confirm != confirmNone {
-		keys = "y/enter confirm   n/esc cancel"
+		keys = "y/enter confirm discard   n/esc cancel"
 	}
 	keysStyled := lipgloss.NewStyle().Foreground(muted).Render(keys)
 	statusStyled := lipgloss.NewStyle().Foreground(text).Render(status)
@@ -437,35 +542,24 @@ func (m model) renderConfirm(width, height int) string {
 		return ""
 	}
 	r := m.repos[m.confirmIndex]
-
-	var message string
-	switch m.confirm {
-	case confirmDiscardSelected:
-		maxChanges := min(len(r.Changes), 8)
-		changes := make([]string, 0, maxChanges+1)
-		for i := 0; i < maxChanges; i++ {
-			changes = append(changes, "  "+r.Changes[i])
-		}
-		if len(r.Changes) > maxChanges {
-			changes = append(changes, fmt.Sprintf("  … and %d more", len(r.Changes)-maxChanges))
-		}
-		warning := "This permanently removes tracked, staged, and untracked changes.\nIgnored files are kept."
-		if m.cfg.DryRun {
-			warning = "DRY RUN: no files will be changed."
-		}
-		message = fmt.Sprintf("Discard local changes in %s and update?\n\n%s\n\n%s\n\n[y] Discard & Update    [n] Cancel", r.Name, strings.Join(changes, "\n"), warning)
-	default:
-		var reasons []string
-		if r.Branch != m.cfg.Branch {
-			reasons = append(reasons, fmt.Sprintf("switch %q → %q", r.Branch, m.cfg.Branch))
-		}
-		if len(r.Changes) > 0 {
-			reasons = append(reasons, fmt.Sprintf("keep %d local change(s)", len(r.Changes)))
-		}
-		message = fmt.Sprintf("Update %s?\n\n%s\n\nNo local changes will be discarded.\n\n[y] Update    [n] Cancel", r.Name, strings.Join(reasons, "\n"))
+	maxChanges := min(len(r.Changes), 8)
+	changes := make([]string, 0, maxChanges+1)
+	for i := 0; i < maxChanges; i++ {
+		changes = append(changes, "  "+r.Changes[i])
 	}
-
-	modal := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(accent).Padding(1, 2).Width(min(72, max(38, width-10))).Render(message)
+	if len(r.Changes) > maxChanges {
+		changes = append(changes, fmt.Sprintf("  … and %d more", len(r.Changes)-maxChanges))
+	}
+	warning := "This permanently removes tracked, staged, and untracked changes.\nIgnored files are kept."
+	if m.cfg.DryRun {
+		warning = "DRY RUN: no files will be changed."
+	}
+	action := fmt.Sprintf("update %s", m.cfg.Branch)
+	if r.Branch != m.cfg.Branch {
+		action = fmt.Sprintf("switch to %s and update", m.cfg.Branch)
+	}
+	message := fmt.Sprintf("Discard local changes in %s, then %s?\n\n%s\n\n%s\n\n[y] Discard & Continue    [n] Cancel", r.Name, action, strings.Join(changes, "\n"), warning)
+	modal := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(red).Padding(1, 2).Width(min(76, max(40, width-10))).Render(message)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
 }
 
