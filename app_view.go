@@ -30,14 +30,23 @@ func (m model) render() string {
 
 	if m.scanning {
 		body := panelStyle.Width(max(30, w-2)).Height(max(5, bodyHeight-2)).Render(fmt.Sprintf("%s  Scanning repositories under\n\n%s", m.spinner.View(), m.cfg.Root))
+		if m.showHelp {
+			body = m.renderHelp(w, bodyHeight)
+		}
 		return header + "\n" + body + "\n" + footer
 	}
 	if m.scanErr != nil {
 		body := panelStyle.Width(max(30, w-2)).Height(max(5, bodyHeight-2)).Render(lipgloss.NewStyle().Foreground(red).Render("Scan failed: " + m.scanErr.Error()))
+		if m.showHelp {
+			body = m.renderHelp(w, bodyHeight)
+		}
 		return header + "\n" + body + "\n" + footer
 	}
 	if len(m.repos) == 0 {
 		body := panelStyle.Width(max(30, w-2)).Height(max(5, bodyHeight-2)).Render("No Git repositories found.")
+		if m.showHelp {
+			body = m.renderHelp(w, bodyHeight)
+		}
 		return header + "\n" + body + "\n" + footer
 	}
 
@@ -48,6 +57,8 @@ func (m model) render() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 	if m.confirm != confirmNone {
 		body = m.renderConfirm(w, bodyHeight)
+	} else if m.showHelp {
+		body = m.renderHelp(w, bodyHeight)
 	}
 	return header + "\n" + body + "\n" + footer
 }
