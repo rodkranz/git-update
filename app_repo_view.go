@@ -91,10 +91,10 @@ func (m model) renderFooter(width int) string {
 		status += fmt.Sprintf("   %s %d running / %d queued", m.spinner.View(), m.active, len(m.queue))
 	}
 
-	keys := "↑↓/jk select   g all   r rescan   q quit"
+	keys := "↑↓/jk navigate   g all   r rescan   ? shortcuts   q quit"
 	if idx, ok := m.actionRepoIndex(); ok {
 		r := m.repos[idx]
-		parts := []string{"↑↓/jk select"}
+		parts := []string{"↑↓/jk navigate"}
 		if !r.InProgress && r.TargetBranch != "" && r.Branch != r.TargetBranch {
 			parts = append(parts, "m switch+update")
 		}
@@ -104,8 +104,11 @@ func (m model) renderFooter(width int) string {
 		if !r.InProgress && r.TargetBranch != "" && len(r.Changes) > 0 {
 			parts = append(parts, "d discard+update")
 		}
-		parts = append(parts, "s SKIP", "g all", "q quit")
+		parts = append(parts, "s SKIP", "g all", "? shortcuts", "q quit")
 		keys = strings.Join(parts, "   ")
+	}
+	if m.showHelp {
+		keys = "? close shortcuts   esc close"
 	}
 	if m.confirm != confirmNone {
 		keys = "y/enter confirm discard   n/esc cancel"
